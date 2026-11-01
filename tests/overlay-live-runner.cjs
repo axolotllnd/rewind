@@ -1,0 +1,14 @@
+const {app,BrowserWindow,screen,desktopCapturer}=require('electron'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path');
+const {Overlay}=require('../electron/overlay.cjs');const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const root=path.resolve(__dirname,'../work/overlay-regression');app.setPath('userData',path.join(root,'profile'));
+app.on('window-all-closed',()=>{});
+async function run(){console.log('OVERLAY STEP start');await fs.mkdir(root,{recursive:true});const config={notifications:true,theme:'dark',overlayGlow:true,notificationPosition:'top-right'};const overlay=new Overlay(()=>config);
+ for(let i=0;i<5;i++){await overlay.show('Повтор сохраняется',`Проверка ${i+1}`,{minimumVisibleMs:70});assert.equal(overlay.window.isVisible(),true);assert.equal(overlay.window.isAlwaysOnTop(),true);await wait(90);}
+ await overlay.show('Повтор сохранён','Проверка видимости в захвате',{minimumVisibleMs:0});await wait(600);await fs.writeFile(path.join(root,'overlay.png'),(await overlay.window.webContents.capturePage()).toPNG());
+ const display=screen.getDisplayNearestPoint(screen.getCursorScreenPoint()),sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:{width:display.size.width,height:display.size.height}}),source=sources.find(s=>s.display_id===String(display.id));assert.ok(source);await fs.writeFile(path.join(root,'screen-with-overlay.png'),source.thumbnail.toPNG());
+ const bounds=overlay.window.getBounds(),rect=display.bounds,scale=source.thumbnail.getSize().width/rect.width;const crop=source.thumbnail.crop({x:Math.max(0,Math.round((bounds.x-rect.x)*scale)),y:Math.max(0,Math.round((bounds.y-rect.y)*scale)),width:Math.round(bounds.width*scale),height:Math.round(bounds.height*scale)});const pixels=crop.toBitmap();let beige=0;for(let i=0;i<pixels.length;i+=4){const b=pixels[i],g=pixels[i+1],r=pixels[i+2];if(r>170&&g>155&&b>125&&r>b+15)beige++;}assert.ok(beige>80,`Overlay is absent from desktop capture (${beige} beige pixels)`);
+ console.log('OVERLAY STEP crash');overlay.window.webContents.forcefullyCrashRenderer();await wait(150);await overlay.show('Окно восстановлено','После сбоя',{minimumVisibleMs:0});assert.equal(overlay.window.isVisible(),true);
+ console.log('OVERLAY STEP hang');overlay.window.webContents.executeJavaScript('while(true){}').catch(()=>{});await wait(100);await overlay.show('Повтор сохранён','После зависания',{minimumVisibleMs:0});assert.equal(overlay.window.isVisible(),true);assert.equal(await overlay.window.webContents.executeJavaScript("document.querySelector('strong').textContent"),'Повтор сохранён');
+ console.log('OVERLAY_LIVE_OK: repeated notices, desktop sharing, renderer crash and hang recovery');
+}
+app.whenReady().then(run).then(()=>app.exit(0)).catch(error=>{console.error(error.stack);app.exit(1);});

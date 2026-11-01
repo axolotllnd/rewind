@@ -1,0 +1,13 @@
+const {app,BrowserWindow,desktopCapturer,session,ipcMain}=require('electron');const path=require('node:path'),fs=require('node:fs');const {CaptureEngine}=require('../electron/engine.cjs');
+const root=path.resolve(__dirname,'../work/native-smoke');app.setPath('userData',path.join(root,'profile'));app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
+let engine,target,runner;const report={};const timeout=setTimeout(()=>{fs.mkdirSync(root,{recursive:true});fs.writeFileSync(path.join(root,'result.json'),JSON.stringify({...report,error:'Native test timeout'}));app.exit(1);},35000);
+app.whenReady().then(async()=>{try{
+ fs.mkdirSync(root,{recursive:true});engine=new CaptureEngine(require('ffmpeg-static'),path.join(root,'cache'),e=>{report.engineError=e;});
+ target=new BrowserWindow({width:640,height:360,title:'REWIND Test Pattern',show:true,webPreferences:{sandbox:true}});
+ await target.loadURL('data:text/html,'+encodeURIComponent('<title>REWIND Test Pattern</title><body style="margin:0;background:#e6d7bd;color:#111;font:40px sans-serif;display:grid;place-items:center;height:100vh"><div>REWIND CAPTURE TEST<small style="display:block;font-size:16px;text-align:center">Generated content only</small><div style="height:8px;width:100%;background:#111;animation:pulse 1s infinite alternate"></div></div><style>@keyframes pulse{to{transform:scaleX(.1)}}</style>'));
+ session.defaultSession.setPermissionRequestHandler((wc,p,cb)=>cb(['media','display-capture'].includes(p)));
+ session.defaultSession.setDisplayMediaRequestHandler(async(req,cb)=>{const sources=await desktopCapturer.getSources({types:['window']});const src=sources.find(s=>s.name==='REWIND Test Pattern');if(src)cb({video:src});else cb({});});
+ ipcMain.handle('test-start',(_,tracks)=>engine.start(tracks,{replaySeconds:15,maxBufferMB:128,resolution:360,fps:30}));ipcMain.handle('test-append',(_,id,data)=>engine.append(id,data));
+ ipcMain.handle('test-result',async(_,data)=>{Object.assign(report,data);if(!data.error){try{report.clip=await engine.save(path.join(root,'clips'));}catch(e){report.error=e.stack;}}await engine.stop();fs.writeFileSync(path.join(root,'result.json'),JSON.stringify(report,null,2));clearTimeout(timeout);setTimeout(()=>app.exit(report.error||report.engineError?1:0),500);});
+ runner=new BrowserWindow({show:false,webPreferences:{preload:path.join(__dirname,'smoke-preload.cjs'),contextIsolation:true,sandbox:true}});await runner.loadFile(path.join(__dirname,'smoke.html'));
+}catch(e){report.error=e.stack;fs.writeFileSync(path.join(root,'result.json'),JSON.stringify(report,null,2));app.exit(1);}});

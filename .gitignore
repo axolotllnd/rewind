@@ -1,0 +1,16 @@
+node_modules/
+dist/
+work/
+outputs/
+*.log
+
+# Generated native helpers, application data, local credentials and review artifacts.
+assets/native/*.exe
+data/
+**/capture-buffer/
+**/editor-cache/
+.env
+.env.*
+!.env.example
+.impeccable/review/
+app/

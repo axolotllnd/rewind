@@ -1,0 +1,1 @@
+const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('testAPI',{start:tracks=>ipcRenderer.invoke('test-start',tracks),append:(id,data)=>ipcRenderer.invoke('test-append',id,data),result:data=>ipcRenderer.invoke('test-result',data)});

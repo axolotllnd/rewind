@@ -1,0 +1,4 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),{spawn}=require('node:child_process'),path=require('node:path');
+test('native overlay survives repeated saves, renderer failures, and appears in desktop capture',{timeout:30000},async()=>{
+ const result=await new Promise(resolve=>{const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;const p=spawn(require('electron'),[path.join(__dirname,'overlay-live-runner.cjs')],{env,windowsHide:true});let output='';p.stdout.on('data',d=>output+=d);p.stderr.on('data',d=>output+=d);const timer=setTimeout(()=>{p.kill();resolve({code:-1,output});},28000);p.on('error',e=>{clearTimeout(timer);resolve({code:-1,output:e.message});});p.on('exit',code=>{clearTimeout(timer);resolve({code,output});});});assert.equal(result.code,0,result.output);assert.match(result.output,/OVERLAY_LIVE_OK/);
+});

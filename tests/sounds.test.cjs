@@ -1,0 +1,5 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');const {validateConfig}=require('../electron/config.cjs');
+test('sound set contains quiet original WAV cues with smooth endpoints and working volume bounds',()=>{
+ for(const name of ['startup','saving','saved','start','stop','enabled','disabled','error','tap']){const wav=fs.readFileSync(path.resolve('assets/sounds',name+'.wav'));assert.equal(wav.toString('ascii',0,4),'RIFF');assert.equal(wav.toString('ascii',8,12),'WAVE');assert.equal(wav.readUInt32LE(24),48000);let peak=0;for(let i=44;i<wav.length;i+=2)peak=Math.max(peak,Math.abs(wav.readInt16LE(i))/32768);assert.ok(peak>.01&&peak<.65);assert.equal(wav.readInt16LE(44),0);assert.ok(Math.abs(wav.readInt16LE(wav.length-2))<50);assert.ok((wav.length-44)/96000<.7);}
+ assert.equal(validateConfig({soundVolume:0,soundEnabled:false}).soundVolume,0);assert.equal(validateConfig({soundVolume:35}).soundVolume,35);assert.throws(()=>validateConfig({soundVolume:101}));assert.throws(()=>validateConfig({soundVolume:-1}));
+});
