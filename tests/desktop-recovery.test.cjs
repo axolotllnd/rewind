@@ -15,6 +15,25 @@ function harness(){
  const close=(p,message)=>{if(message)p.stderr.emit('data',Buffer.from(message+'\n'));p.exitCode=message?1:0;p.emit('close',p.exitCode);};
  return {capture,engine,session,children,writes,failures,events,ready,close};
 }
+const deniedInput='[Parsed_ddagrab_0 @ 000002a6c6e44140] Failed to configure output pad on Parsed_ddagrab_0\n[in#0 @ 000002a6c6e5c540] Error opening input: Operation not permitted\nError opening input file ddagrab=output_idx=0:framerate=165:draw_mouse=1.\nError opening input files: Operation not permitted';
+test('the exact reported EPERM during UAC is recoverable without a numeric HRESULT; other failures remain fatal',()=>{
+ for(const message of [deniedInput,deniedInput.replaceAll('Operation not permitted','Permission denied'),'[Parsed_ddagrab_0] Desktop duplication access denied'])assert.equal(desktopUnavailable(message),true,message);
+ for(const message of ['[Parsed_ddagrab_0] Invalid output duplication argument\nError opening input: Invalid argument','[Parsed_ddagrab_0] Failed to configure output pad\n[h264_nvenc] No capable devices found','[ddagrab] Started\nError opening output file pipe:1: Operation not permitted','Error opening input file recording.mp4: Operation not permitted'])assert.equal(desktopUnavailable(message,{running:true}),false,message);
+});
+test('a running replay survives access loss followed by repeated full FFmpeg EPERM logs until admin confirmation closes',async()=>{
+ const h=harness();try{
+  const start=h.capture.start(h.engine,config,output);h.ready(h.children[0]);await start;
+  h.children[0].stdout.emit('data',Buffer.from('before-UAC'));h.close(h.children[0],'[Parsed_ddagrab_0] AcquireNextFrame failed: 887a0026');
+  for(let i=1;i<=8;i++){await until(()=>h.children.length===i+1);h.close(h.children[i],deniedInput);assert.equal(h.capture.active,true);assert.equal(h.engine.session,h.session);}
+  await until(()=>h.children.length===10);h.ready(h.children[9]);h.children[9].stdout.emit('data',Buffer.from('after-UAC'));await tick();
+  assert.deepEqual(h.events,['recovering','restored']);assert.deepEqual(h.failures,[]);assert.equal(h.capture.active,true);assert.equal(h.capture.recovering,false);assert.equal(h.session.recordStart,0);assert.equal(h.session.lastReplayAt,1);assert.equal(Buffer.concat(h.writes).toString(),'before-UACafter-UAC');
+ }finally{await h.capture.stop();}
+});
+test('EPERM before the first frame waits for access; stopping during this wait cancels the startup and all retries',async()=>{
+ const h=harness(),start=h.capture.start(h.engine,config,output),rejected=assert.rejects(start,/CAPTURE_START_CANCELLED/);
+ h.close(h.children[0],deniedInput);await until(()=>h.children.length===2);h.close(h.children[1],deniedInput);await h.capture.stop();await rejected;const count=h.children.length;
+ await new Promise(r=>setTimeout(r,50));assert.equal(h.children.length,count);assert.equal(h.capture.active,false);assert.deepEqual(h.failures,[]);
+});
 test('UAC access loss retries access denied, restores the same buffer and keeps audio/replay boundaries',async()=>{
  const h=harness();try{
   const start=h.capture.start(h.engine,config,output);h.ready(h.children[0]);await start;

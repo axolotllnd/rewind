@@ -6,7 +6,14 @@ function screenArguments(config,output,epoch,{duration}={}){
  // wall-clock timestamps so the segmenter and the uninterrupted audio stay aligned.
  return ['-hide_banner','-loglevel','warning','-nostats','-stats_period','0.2','-progress','pipe:2','-init_hw_device',`d3d11va=capture:${output.adapter}`,'-filter_hw_device','capture','-copyts','-f','lavfi','-i',filter,'-an','-vf',videoFilter,'-filter_threads','2','-c:v','h264_nvenc','-preset','p1','-tune','ull','-profile:v','high','-bf','0','-rc','vbr','-b:v',`${config.bitrate}M`,'-maxrate',`${config.bitrate}M`,'-bufsize',`${config.bitrate*2}M`,'-g',String(fps),'-rc-lookahead','0','-r',String(fps),'-fps_mode','cfr',...(duration?['-t',String(duration)]:[]),'-f','mpegts','-mpegts_copyts','1','-mpegts_flags','+resend_headers+initial_discontinuity','-muxdelay','0','-flush_packets','1','pipe:1'];
 }
-function desktopUnavailable(message,{running=false}={}){return /(?:ddagrab|DuplicateOutput|desktop duplication)[\s\S]*(?:887a0026|887a0028|887a0025|80070005|DXGI_ERROR_ACCESS_LOST|E_ACCESSDENIED)/i.test(message)||running&&/ddagrab[\s\S]*887a0004/i.test(message);}
+function desktopUnavailable(message,{running=false}={}){
+ if(!/(?:ddagrab|DuplicateOutput|desktop duplication)/i.test(message))return false;
+ // FFmpeg 6.1 maps DuplicateOutput's E_ACCESSDENIED to AVERROR(EPERM).
+ // Its public input error then contains only "Operation not permitted", not
+ // 80070005. Recognise that source-open failure as well as raw DXGI results.
+ const accessDenied=/Desktop duplication access denied/i.test(message)||/Error (?:opening|initializing) input(?: files?)?[^\r\n]*(?:Operation not permitted|Permission denied)/i.test(message);
+ return accessDenied||/(?:887a0026|887a0028|887a0025|80070005|DXGI_ERROR_ACCESS_LOST|E_ACCESSDENIED)/i.test(message)||running&&/887a0004/i.test(message);
+}
 class NativeScreen extends EventEmitter{
  constructor(ffmpeg,probe,{spawnProcess=spawn,stopTimeoutMs=3000,killTimeoutMs=1000,startTimeoutMs=12000,retryDelayMs=500,maxRetryDelayMs=2000}={}){super();Object.assign(this,{ffmpeg,probe,spawnProcess,stopTimeoutMs,killTimeoutMs,startTimeoutMs,retryDelayMs,maxRetryDelayMs});this.active=false;this.recovering=false;}
  outputs(){return new Promise((resolve,reject)=>execFile(this.probe,[],{windowsHide:true,encoding:'utf8',timeout:8000},(e,s,err)=>{try{if(e)throw Error(err||e.message);resolve(JSON.parse(s));}catch(error){reject(error);}}));}
