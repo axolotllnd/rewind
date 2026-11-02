@@ -87,7 +87,8 @@ Name: "{group}\REWIND"; Filename: "{app}\REWIND.exe"; WorkingDir: "{app}"; IconF
 Name: "{autodesktop}\REWIND"; Filename: "{app}\REWIND.exe"; WorkingDir: "{app}"; IconFilename: "{app}\resources\app\assets\icon.ico"; AppUserModelID: "local.rewind.recorder"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\REWIND.exe"; Description: "{cm:LaunchRewind}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\REWIND.exe"; Description: "{cm:LaunchRewind}"; Flags: nowait postinstall skipifsilent; Check: not IsAppUpdate
+Filename: "{app}\REWIND.exe"; Flags: nowait; Check: IsAppUpdate
 
 [Registry]
 #ifndef TestBuild
@@ -100,6 +101,11 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 [Code]
 function CreateFileForCheck(lpFileName: String; dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes: LongWord; hTemplateFile: THandle): THandle; external 'CreateFileW@kernel32.dll stdcall';
 function CloseFileCheck(hObject: THandle): Boolean; external 'CloseHandle@kernel32.dll stdcall';
+
+function IsAppUpdate(): Boolean;
+begin
+  Result := ExpandConstant('{param:REWINDUPDATE|0}') = '1';
+end;
 
 procedure InitializeWizard();
 begin
@@ -132,14 +138,27 @@ begin
   end;
 end;
 
+procedure WaitForAppHandoff();
+var I: Integer;
+begin
+  if IsAppUpdate() or (ExpandConstant('{param:REWINDREMOVE|0}') = '1') then begin
+    for I := 1 to 100 do begin
+      if not IsRewindRunning(ExpandConstant('{app}\REWIND.exe')) then Exit;
+      Sleep(100);
+    end;
+  end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+  WaitForAppHandoff();
   if IsRewindRunning(ExpandConstant('{app}\REWIND.exe')) then Result := CustomMessage('CloseRewind');
 end;
 
 function InitializeUninstall(): Boolean;
 begin
+  WaitForAppHandoff();
   Result := not IsRewindRunning(ExpandConstant('{app}\REWIND.exe'));
   if not Result then MsgBox(CustomMessage('CloseBeforeUninstall'), mbInformation, MB_OK);
 end;

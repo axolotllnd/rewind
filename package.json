@@ -1,6 +1,6 @@
 {
   "name": "rewind-recorder",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "private": true,
   "description": "Windows screen recording and instant replay",
   "main": "electron/main.cjs",
@@ -13,7 +13,7 @@
     "build:native": "node scripts/build-native.cjs",
     "build:sounds": "node scripts/build-sounds.cjs",
     "installer": "node scripts/installer.cjs",
-    "test:code": "node --test tests/config.test.cjs tests/native-screen.test.cjs tests/desktop-recovery.test.cjs tests/replay.test.cjs tests/shared-shortcuts.test.cjs tests/audio-processing.test.cjs tests/save-status.test.cjs tests/recorder.test.cjs tests/sounds.test.cjs tests/distribution.test.cjs"
+    "test:code": "node --test tests/config.test.cjs tests/app-maintenance.test.cjs tests/native-screen.test.cjs tests/desktop-recovery.test.cjs tests/replay.test.cjs tests/shared-shortcuts.test.cjs tests/audio-processing.test.cjs tests/save-status.test.cjs tests/recorder.test.cjs tests/sounds.test.cjs tests/distribution.test.cjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.0",
