@@ -10,7 +10,7 @@ class CaptureEngine{
   try{for(const t of tracks){
    if(!/^(video|audio[1-6])$/.test(t.id))throw new Error('Неверный поток');
    const folder=path.join(dir,t.id);await fsp.mkdir(folder);
-   const args=['-hide_banner','-loglevel','warning',...(t.preserveTimestamps?['-copyts']:[]),'-fflags','+genpts','-probesize','32768','-analyzeduration','500000','-i','pipe:0','-map','0','-c','copy','-f','segment','-segment_time','1','-reset_timestamps','1','-segment_list',path.join(folder,'list.csv'),'-segment_list_type','csv','-segment_format','matroska','-segment_format_options','cluster_time_limit=50:flush_packets=1',path.join(folder,'part-%08d.mkv')];
+   const args=['-hide_banner','-loglevel','warning',...(t.preserveTimestamps?['-copyts']:[]),'-fflags','+genpts','-probesize','32768','-analyzeduration','500000',...(t.inputFormat==='mpegts'?['-f','mpegts']:[]),'-i','pipe:0','-map','0','-c','copy','-f','segment','-segment_time','1','-reset_timestamps','1','-segment_list',path.join(folder,'list.csv'),'-segment_list_type','csv','-segment_format','matroska','-segment_format_options','cluster_time_limit=50:flush_packets=1',path.join(folder,'part-%08d.mkv')];
    const proc=spawn(this.ffmpeg,args,{windowsHide:true,stdio:['pipe','ignore','pipe']});
    const inp={...t,folder,proc,stderr:'',pending:0,closed:false,started:s.started,byteCount:0};s.inputs.push(inp);
    proc.stderr.on('data',d=>{inp.stderr=(inp.stderr+d).slice(-6000);});
