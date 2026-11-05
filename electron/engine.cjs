@@ -1,5 +1,8 @@
 const fs=require('node:fs');const fsp=fs.promises;const path=require('node:path');const os=require('node:os');const {spawn}=require('node:child_process');const {randomUUID}=require('node:crypto');
 const {selectSegments}=require('./config.cjs');
+function segmentArguments(folder){
+ return ['-f','segment','-segment_time','1','-reset_timestamps','1','-segment_list',path.join(folder,'list.csv'),'-segment_list_type','csv','-segment_format','matroska','-segment_format_options','cluster_time_limit=50:flush_packets=1',path.join(folder,'part-%08d.mkv')];
+}
 function replayBounds(session,end,kind='replay'){return {start:kind==='record'?session.recordStart:Math.max(0,session.lastReplayAt??0,end-session.config.replaySeconds),end};}
 class CaptureEngine{
  constructor(ffmpeg,root,onError,onEvent=()=>{}){this.ffmpeg=ffmpeg;this.root=root;this.onError=onError;this.onEvent=onEvent;this.session=null;this.jobs=new Set();this.saveQueue=Promise.resolve();}
@@ -10,9 +13,12 @@ class CaptureEngine{
   try{for(const t of tracks){
    if(!/^(video|audio[1-6])$/.test(t.id))throw new Error('Неверный поток');
    const folder=path.join(dir,t.id);await fsp.mkdir(folder);
-   const args=['-hide_banner','-loglevel','warning',...(t.preserveTimestamps?['-copyts']:[]),'-fflags','+genpts','-probesize','32768','-analyzeduration','500000',...(t.inputFormat==='mpegts'?['-f','mpegts']:[]),'-i','pipe:0','-map','0','-c','copy','-f','segment','-segment_time','1','-reset_timestamps','1','-segment_list',path.join(folder,'list.csv'),'-segment_list_type','csv','-segment_format','matroska','-segment_format_options','cluster_time_limit=50:flush_packets=1',path.join(folder,'part-%08d.mkv')];
+   const inp={...t,folder,stderr:'',pending:0,closed:false,started:s.started,byteCount:0};
+   s.inputs.push(inp);
+   if(t.external)continue;
+   const args=['-hide_banner','-loglevel','warning',...(t.preserveTimestamps?['-copyts']:[]),'-fflags','+genpts','-probesize','32768','-analyzeduration','500000',...(t.inputFormat==='mpegts'?['-f','mpegts']:[]),'-i','pipe:0','-map','0','-c','copy',...segmentArguments(folder)];
    const proc=spawn(this.ffmpeg,args,{windowsHide:true,stdio:['pipe','ignore','pipe']});
-   const inp={...t,folder,proc,stderr:'',pending:0,closed:false,started:s.started,byteCount:0};s.inputs.push(inp);
+   inp.proc=proc;
    proc.stderr.on('data',d=>{inp.stderr=(inp.stderr+d).slice(-6000);});
    proc.stdin.on('error',()=>{});
    proc.on('error',e=>this.fail(s,e.message));proc.on('exit',code=>{inp.closed=true;if(code&&this.session===s)this.fail(s,`Обработка ${t.id}: ${inp.stderr.slice(-500)}`);});
@@ -20,7 +26,7 @@ class CaptureEngine{
   this.timer=setInterval(()=>this.prune().catch(e=>{if(this.session===s)this.fail(s,e.message);}),1000);return s.id;
  }
  fail(s,message){if(s.error)return;s.error=message;this.onError(message);}
- async append(id,data){const s=this.session;if(!s||s.error)throw new Error(s?.error||'Захват остановлен');const t=s.inputs.find(t=>t.id===id);if(!t||t.closed)throw new Error('Поток закрыт');const b=Buffer.from(data);t.pending+=b.length;if(t.pending>32*1024*1024){t.pending-=b.length;throw new Error('Диск не успевает записывать. Уменьшите качество.');}try{await new Promise((res,rej)=>t.proc.stdin.write(b,e=>e?rej(e):res()));}finally{t.pending-=b.length;}}
+ async append(id,data){const s=this.session;if(!s||s.error)throw new Error(s?.error||'Захват остановлен');const t=s.inputs.find(t=>t.id===id);if(!t?.proc||t.closed)throw new Error('Поток закрыт');const b=Buffer.from(data);t.pending+=b.length;if(t.pending>32*1024*1024){t.pending-=b.length;throw new Error('Диск не успевает записывать. Уменьшите качество.');}try{await new Promise((res,rej)=>t.proc.stdin.write(b,e=>e?rej(e):res()));}finally{t.pending-=b.length;}}
  async segments(t,{closedOnly=false}={}){
   let rows=[];try{rows=(await fsp.readFile(path.join(t.folder,'list.csv'),'utf8')).trim().split(/\r?\n/).filter(Boolean).map(line=>{const m=line.match(/^"?([^",]+)"?,([\d.-]+),([\d.-]+)/);return m?{file:path.join(t.folder,path.basename(m[1])),start:+m[2]+(t.offset||0),end:+m[3]+(t.offset||0)}:null;}).filter(Boolean);}catch{}
   const names=(await fsp.readdir(t.folder)).filter(n=>/^part-\d+\.mkv$/.test(n)).sort();
@@ -79,6 +85,6 @@ class CaptureEngine{
  async videoCodec(s,file){if(!s.codecPromise)s.codecPromise=(async()=>{const stderr=await this.run(['-hide_banner','-i',file],10000,{probe:true});const codec=stderr.match(/Video:\s*([^,\s]+)/)?.[1];if(!codec)throw new Error('Не удалось определить кодек буфера');return codec;})();return s.codecPromise;}
  encodingOptions(encoder){if(encoder==='copy')return ['-c:v','copy'];if(encoder==='libvpx-vp9')return ['-c:v',encoder,'-deadline','realtime','-cpu-used','8','-row-mt','1','-threads:v','2','-crf','24','-b:v','0'];return ['-c:v','libx264','-preset','ultrafast','-threads:v','2','-crf','18'];}
  run(args,timeoutMs=120000,{probe=false}={}){return new Promise((resolve,reject)=>{const p=spawn(this.ffmpeg,args,{windowsHide:true,stdio:['ignore','ignore','pipe']});this.jobs.add(p);try{os.setPriority(p.pid,os.constants.priority.PRIORITY_BELOW_NORMAL);}catch{}let err='';const timer=setTimeout(()=>p.kill(),timeoutMs);p.stderr.on('data',d=>err=(err+d).slice(-8000));p.on('error',error=>{clearTimeout(timer);this.jobs.delete(p);reject(error);});p.on('close',code=>{clearTimeout(timer);this.jobs.delete(p);code===0||probe&&code===1?resolve(err):reject(new Error(err.slice(-700)||'Не удалось сохранить видео'));});});}
- async stop({preserve=false}={}){clearInterval(this.timer);const s=this.session;this.session=null;if(!s)return;s.stopped=true;s.preserve=preserve;await Promise.all(s.inputs.map(t=>new Promise(resolve=>{if(t.closed)return resolve();const timeout=setTimeout(()=>{t.proc.kill();resolve();},5000);t.proc.once('exit',()=>{clearTimeout(timeout);resolve();});t.proc.stdin.end();})));if(!s.pins&&!preserve)await fsp.rm(s.dir,{recursive:true,force:true});}
+ async stop({preserve=false}={}){clearInterval(this.timer);const s=this.session;this.session=null;if(!s)return;s.stopped=true;s.preserve=preserve;await Promise.all(s.inputs.map(t=>new Promise(resolve=>{if(!t.proc||t.closed)return resolve();const timeout=setTimeout(()=>{t.proc.kill();resolve();},5000);t.proc.once('exit',()=>{clearTimeout(timeout);resolve();});t.proc.stdin.end();})));if(!s.pins&&!preserve)await fsp.rm(s.dir,{recursive:true,force:true});}
 }
-module.exports={CaptureEngine,replayBounds};
+module.exports={CaptureEngine,replayBounds,segmentArguments};

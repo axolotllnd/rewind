@@ -3,6 +3,7 @@ const {app,BrowserWindow,session,protocol,ipcMain}=require('electron'),path=requ
 const {installWindowPermissions}=require('../electron/window-permissions.cjs'),{defaults}=require('../electron/config.cjs');
 const {CaptureEngine}=require('../electron/engine.cjs'),{MediaService}=require('../electron/media.cjs');
 const {SoundPlayer}=require('../electron/sounds.cjs');
+const {Overlay}=require('../electron/overlay.cjs');
 const root=path.resolve(__dirname,'..'),work=path.join(root,'work/ui-regression');fs.mkdirSync(work,{recursive:true});app.setPath('userData',path.join(work,'profile'));
 app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');protocol.registerSchemesAsPrivileged([{scheme:'rewind-media',privileges:{standard:true,secure:true,stream:true,corsEnabled:true}}]);
 let win;
@@ -18,7 +19,7 @@ async function run(){
  const busSource=fs.readFileSync(path.join(root,'src/preview-audio.js'),'utf8').split('export class')[0].replace('export function','function');
  let uiConfig={...defaults,outputDir:work};const openedLinks=[];
  ipcMain.handle('test-get-config',()=>uiConfig);ipcMain.handle('test-set-config',(_event,value)=>{uiConfig=value;});ipcMain.handle('test-open-link',(_event,id)=>{openedLinks.push(id);});
- let soundConfig={soundEnabled:true,soundVolume:35};const soundPlayer=new SoundPlayer(()=>soundConfig);
+ let soundConfig={soundEnabled:true,soundVolume:35};const soundPlayer=new SoundPlayer(()=>soundConfig,new Overlay(()=>soundConfig));
  ipcMain.handle('test-sound',async(_event,name,preview,volume,enabled)=>{soundConfig={soundEnabled:enabled,soundVolume:volume};await soundPlayer.play(name,{preview});});
  ipcMain.handle('test-sound-config',async(_event,volume,enabled)=>{soundConfig={soundEnabled:enabled,soundVolume:volume};await soundPlayer.configure();});
  const fixture=path.join(work,'fixture.mp4'),made=spawnSync(require('ffmpeg-static'),['-v','error','-y','-f','lavfi','-i','testsrc2=size=320x180:rate=30','-t','10','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-movflags','+faststart',fixture],{encoding:'utf8',windowsHide:true});assert.equal(made.status,0,made.stderr);

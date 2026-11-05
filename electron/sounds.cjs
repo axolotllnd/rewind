@@ -1,3 +1,28 @@
-const {BrowserWindow}=require('electron'),path=require('node:path');
-class SoundPlayer{constructor(config){this.config=config;this.last=new Map();}async configure(){if(!this.window||this.window.isDestroyed())return;await this.ready;const cfg=this.config();await this.window.webContents.executeJavaScript(`window.soundSettings(${Math.max(0,Math.min(100,cfg.soundVolume??35))/100},${!!cfg.soundEnabled})`);}async play(name,{preview=false}={}){if(!['startup','saving','saved','start','stop','enabled','disabled','error','tap'].includes(name))return;const cfg=this.config();if(!cfg.soundEnabled&&!preview)return;if(Date.now()-(this.last.get(name)||0)<200)return;this.last.set(name,Date.now());if(!this.window||this.window.isDestroyed()){this.window=new BrowserWindow({show:false,skipTaskbar:true,focusable:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});this.ready=this.window.loadFile(path.join(__dirname,'../assets/sound-player.html'));}await this.ready;await this.window.webContents.executeJavaScript(`window.playSound(${JSON.stringify(name)},${Math.max(0,Math.min(100,cfg.soundVolume??35))/100})`);}}
+const soundNames=new Set(['startup','saving','saved','start','stop','enabled','disabled','error','tap']);
+
+class SoundPlayer{
+ constructor(config,surface){
+  this.config=config;
+  this.surface=surface;
+  this.last=new Map();
+ }
+ volume(){
+  return Math.max(0,Math.min(100,this.config().soundVolume??35))/100;
+ }
+ async configure(){
+  if(!this.surface.window||this.surface.window.isDestroyed())return;
+  const window=await this.surface.ensureWindow();
+  const enabled=!!this.config().soundEnabled;
+  await window.webContents.executeJavaScript(`window.soundSettings(${this.volume()},${enabled})`);
+ }
+ async play(name,{preview=false}={}){
+  if(!soundNames.has(name)||!this.config().soundEnabled&&!preview)return;
+  const now=Date.now();
+  if(now-(this.last.get(name)||0)<200)return;
+  this.last.set(name,now);
+  const window=await this.surface.ensureWindow();
+  if(!this.config().soundEnabled&&!preview)return;
+  await window.webContents.executeJavaScript(`window.playSound(${JSON.stringify(name)},${this.volume()})`);
+ }
+}
 module.exports={SoundPlayer};
