@@ -9,6 +9,16 @@ test('a desktop timestamp jump does not encode thousands of replacement frames',
  const result=spawnSync(require('ffmpeg-static'),['-hide_banner','-v','error','-copyts','-f','lavfi','-i','color=s=160x90:r=20:d=0.3','-vf',"setpts=PTS+if(gte(N\\,3)\\,60/TB\\,0)",'-fps_mode','passthrough','-progress','pipe:1','-f','null','-'],{encoding:'utf8',windowsHide:true});
  assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/frame=6\n/);assert.match(result.stdout,/dup_frames=0/);
 });
+test('capture timestamps remain strictly increasing through a burst and retain a desktop gap',()=>{
+ const {spawnSync}=require('node:child_process');
+ const args=screenArguments(config,output,1000);
+ const timestamps=args[args.indexOf('-vf')+1].replaceAll('RTCTIME-1000000','if(lt(N,3),0,60000000)');
+ const run=spawnSync(require('ffmpeg-static'),['-v','error','-copyts','-f','lavfi','-i','color=s=160x90:r=165','-frames:v','6','-vf',timestamps,
+  '-enc_time_base','1:165','-fps_mode','passthrough','-c:v','libx264','-bf','0','-f','framecrc','pipe:1'],{encoding:'utf8',windowsHide:true});
+ assert.equal(run.status,0,run.stderr);
+ const dts=run.stdout.split(/\r?\n/).filter(line=>line.startsWith('0,')).map(line=>Number(line.split(',')[1]));
+ assert.deepEqual(dts,[0,1,2,9900,9901,9902]);
+});
 test('a hung process is replaced with compatibility capture; a protected desktop is waited out without spawning capture',async()=>{
  const children=[],events=[];let accessible=false;
  const capture=new NativeScreen('',null,{stallTimeoutMs:20,retryDelayMs:2,maxRetryDelayMs:3,desktopReady:async()=>accessible,stopTimeoutMs:2,killTimeoutMs:2,spawnProcess(_exe,args){

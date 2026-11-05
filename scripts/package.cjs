@@ -8,9 +8,12 @@ fs.cpSync(electronDir,out,{recursive:true});
 const sourceExe=path.join(out,'electron.exe'),targetExe=path.join(out,'REWIND.exe');if(fs.existsSync(targetExe))fs.unlinkSync(targetExe);fs.renameSync(sourceExe,targetExe);
 const rcedit=process.env.RCEDIT||path.join(root,'work/tools/rcedit-x64.exe');
 if(!fs.existsSync(rcedit))throw Error('Install Electron rcedit x64 2.0.0 in work/tools or set RCEDIT.');
+// Keep identical launcher bytes while the Electron runtime and branding stay
+// the same. The actual application version lives in resources/app/package.json.
+const launcherVersion='0.2.14';
 execFileSync(rcedit,[targetExe,'--set-version-string','FileDescription','REWIND','--set-version-string','ProductName','REWIND',
  '--set-version-string','InternalName','REWIND','--set-version-string','OriginalFilename','REWIND.exe',
- '--set-file-version',version,'--set-product-version',version,'--set-icon',path.join(root,'assets/icon.ico')],{windowsHide:true});
+ '--set-file-version',launcherVersion,'--set-product-version',launcherVersion,'--set-icon',path.join(root,'assets/icon.ico')],{windowsHide:true});
 const appDir=path.join(out,'resources','app');fs.mkdirSync(appDir,{recursive:true});
 for(const dir of ['dist','electron','assets'])if(fs.existsSync(path.join(root,dir)))fs.cpSync(path.join(root,dir),path.join(appDir,dir),{recursive:true});
 fs.writeFileSync(path.join(appDir,'package.json'),JSON.stringify({name:'rewind',productName:'REWIND',version,main:'electron/main.cjs'},null,2));

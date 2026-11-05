@@ -21,7 +21,7 @@ const errors={
 function message(error){const code=String(error).trim().split(': ').at(-1);return t(errors[code]||'Не удалось выполнить действие. Повтори попытку.');}
 const megabytes=value=>(value/1024**2).toFixed(1);
 export default function AppMaintenance({cfg,configure}){
- const [state,setState]=useState({phase:'idle',currentVersion:'0.2.14',installed:false,canUninstall:false}),[working,setWorking]=useState(false),[confirmation,setConfirmation]=useState(null),[failure,setFailure]=useState('');
+ const [state,setState]=useState({phase:'idle',currentVersion:'0.2.15',installed:false,canUninstall:false}),[working,setWorking]=useState(false),[confirmation,setConfirmation]=useState(null),[failure,setFailure]=useState('');
  useEffect(()=>{let alive=true;const accept=next=>{if(alive)setState(previous=>({...previous,...next}));};const unsubscribe=api?.onMaintenanceState?.(accept);api?.maintenanceState?.().then(accept).catch(()=>{if(alive)setFailure('network');});return()=>{alive=false;unsubscribe?.();};},[]);
  const busy=working||['checking','downloading','installing','removing'].includes(state.phase);
  async function act(action){setWorking(true);setFailure('');try{const result=await api[action]();if(result)setState(previous=>({...previous,...result}));}catch(error){setFailure(error.message);}finally{setWorking(false);}}
@@ -36,7 +36,7 @@ export default function AppMaintenance({cfg,configure}){
    </div>
    {state.phase==='downloading'&&<div className="update-download"><progress aria-label={t('Загрузка обновления')} max="1" value={state.progress||0}/><div><span>{megabytes(state.received||0)} / {megabytes(state.total||0)} {t('МБ')} · {Math.floor((state.progress||0)*100)}%</span><button className="text-btn" onClick={()=>act('cancelUpdate')}>{t('Отменить загрузку')}</button></div></div>}
    {(failure||state.error)&&<p className="maintenance-error" role="alert">{message(failure||state.error)}</p>}
-   {state.phase==='available'&&state.installed&&<div className="update-actions"><button className="primary-btn" disabled={working} onClick={()=>act('downloadUpdate')}><DownloadSimple size={18}/>{t('Скачать обновление')}<span>{megabytes(state.total)} {t('МБ')}</span></button><span>{t('Запись продолжится во время загрузки.')}</span></div>}
+   {state.phase==='available'&&state.installed&&<div className="update-actions"><button className="primary-btn" disabled={working} onClick={()=>act('downloadUpdate')}><DownloadSimple size={18}/>{t('Скачать обновление')}<span>{megabytes(state.total)} {t('МБ')}</span></button><span>{state.packageKind==='delta'?t('Скачаются только изменённые файлы.'):t('Запись продолжится во время загрузки.')}</span></div>}
    {state.phase==='ready'&&state.installed&&<div className="update-actions"><button className="primary-btn" disabled={working} onClick={()=>setConfirmation('update')}><ArrowClockwise size={18}/>{t('Установить и перезапустить')}</button><span>{t('Файл проверен. Клипы и настройки сохранятся.')}</span></div>}
    <div className="setting-row"><div><h3>{t('Проверять обновления при запуске')}</h3><p>{t('Только проверка. Скачивание и установка — по твоей команде.')}</p></div><Toggle label={t('Проверять обновления при запуске')} value={cfg.checkUpdatesOnStart!==false} disabled={['installing','removing'].includes(state.phase)} onChange={value=>configure({checkUpdatesOnStart:value})}/></div>
    <button className="text-btn" disabled={!api||['installing','removing'].includes(state.phase)} onClick={()=>act('releasePage')}>{t('Все версии на GitHub')}<ArrowSquareOut size={15}/></button>

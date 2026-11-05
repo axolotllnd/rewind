@@ -8,7 +8,7 @@ function harness(){
  const children=[],writes=[],failures=[],events=[],session={started:Date.now(),recordStart:0,lastReplayAt:1};
  const engine={session,append:async(id,data)=>writes.push(Buffer.from(data))};
  const capture=new NativeScreen('',null,{retryDelayMs:5,maxRetryDelayMs:10,stopTimeoutMs:5,killTimeoutMs:5,spawnProcess(){
-  const p=new EventEmitter();p.stdin=new EventEmitter();p.stdin.write=()=>{};p.stdout=new EventEmitter();p.stdout.pause=()=>{};p.stdout.resume=()=>{};p.stderr=new EventEmitter();p.exitCode=null;p.kill=()=>{};children.push(p);return p;
+ const p=new EventEmitter();p.stdin=new EventEmitter();p.stdin.write=()=>{};p.stdout=new EventEmitter();p.stdout.pause=()=>{};p.stdout.resume=()=>{};p.stderr=new EventEmitter();p.exitCode=null;p.kill=()=>{};children.push(p);return p;
  }});
  capture.on('failure',m=>failures.push(m));capture.on('recovering',()=>events.push('recovering'));capture.on('restored',()=>events.push('restored'));
  const ready=p=>p.stderr.emit('data',Buffer.from('frame=1\n'));
@@ -16,6 +16,31 @@ function harness(){
  return {capture,engine,session,children,writes,failures,events,ready,close};
 }
 const deniedInput='[Parsed_ddagrab_0 @ 000002a6c6e44140] Failed to configure output pad on Parsed_ddagrab_0\n[in#0 @ 000002a6c6e5c540] Error opening input: Operation not permitted\nError opening input file ddagrab=output_idx=0:framerate=165:draw_mouse=1.\nError opening input files: Operation not permitted';
+const ddagrabEof='[Parsed_ddagrab_0 @ 000002ab01b83040] EOF timestamp not reliable';
+const externalError='[in#0/lavfi @ 000002ab01b7b180] Error during demuxing: Generic error in an external library';
+const dtsWarning='[mpegts @ 000002ab01b8c2c0] Non-monotonic DTS in output stream 0:0; previous: 1240549091, current: 1240549091; changing to 1240549092. This may result in incorrect timestamps in the output file.';
+test('the reported ddagrab EOF and external demux error recover without clearing the replay',async()=>{
+ const h=harness();let compatibility=0;h.capture.on('compatibility',()=>compatibility++);
+ try{
+  const start=h.capture.start(h.engine,config,output);h.ready(h.children[0]);await start;
+  for(let index=0;index<3;index++){
+   const child=h.children[index];
+   child.stderr.emit('data',Buffer.from(ddagrabEof+'\n'+'out_time_us=1000000\n'.repeat(600)));
+   h.close(child,externalError+'\n'+dtsWarning);
+   await until(()=>h.children.length===index+2);
+   h.ready(h.children[index+1]);
+  }
+  assert.equal(compatibility,1);
+  assert.equal(h.capture.actual.backend,'desktop-compatibility');
+  assert.equal(h.engine.session,h.session);
+  assert.equal(h.session.lastReplayAt,1);
+  assert.equal(h.session.recordStart,0);
+  assert.deepEqual(h.failures,[]);
+  for(const message of [ddagrabEof,dtsWarning,ddagrabEof+'\n'+externalError.replace('/lavfi','/matroska')]){
+   assert.equal(desktopUnavailable(message,{running:true}),false);
+  }
+ }finally{await h.capture.stop();}
+});
 test('the exact reported EPERM during UAC is recoverable without a numeric HRESULT; other failures remain fatal',()=>{
  for(const message of [deniedInput,deniedInput.replaceAll('Operation not permitted','Permission denied'),'[Parsed_ddagrab_0] Desktop duplication access denied'])assert.equal(desktopUnavailable(message),true,message);
  for(const message of ['[Parsed_ddagrab_0] Invalid output duplication argument\nError opening input: Invalid argument','[Parsed_ddagrab_0] Failed to configure output pad\n[h264_nvenc] No capable devices found','[ddagrab] Started\nError opening output file pipe:1: Operation not permitted','Error opening input file recording.mp4: Operation not permitted'])assert.equal(desktopUnavailable(message,{running:true}),false,message);

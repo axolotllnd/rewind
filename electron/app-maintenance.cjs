@@ -3,11 +3,20 @@ const repository='https://github.com/axolotllnd/rewind',latestApi='https://api.g
 class MaintenanceError extends Error{constructor(code){super(code);this.code=code;}}
 function versionParts(value){const m=/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(value);if(!m||m.slice(1).some(n=>!Number.isSafeInteger(+n)))throw new MaintenanceError('invalid-release');return m.slice(1).map(Number);}
 function newerVersion(next,current){const a=versionParts(next),b=versionParts(current);for(let i=0;i<3;i++)if(a[i]!==b[i])return a[i]>b[i];return false;}
-function releaseInstaller(release){
+function releaseInstaller(release,currentVersion=null){
  if(release?.draft||release?.prerelease||!Array.isArray(release?.assets))throw new MaintenanceError('invalid-release');
- const version=versionParts(release.tag_name).join('.'),name=`REWIND-${version}-Setup.exe`,asset=release.assets.find(a=>a.name===name),url=`${repository}/releases/download/${release.tag_name}/${name}`;
- if(!asset||asset.browser_download_url!==url||asset.state!=='uploaded'||!Number.isSafeInteger(asset.size)||asset.size<2||asset.size>1024**3||!/^sha256:[a-f0-9]{64}$/i.test(asset.digest||''))throw new MaintenanceError('invalid-release');
- return {version,name,url,size:asset.size,sha256:asset.digest.slice(7).toLowerCase(),publishedAt:release.published_at||null};
+ const version=versionParts(release.tag_name).join('.');
+ function find(name,kind){
+  const asset=release.assets.find(item=>item.name===name),url=`${repository}/releases/download/${release.tag_name}/${name}`;
+  if(!asset||asset.browser_download_url!==url||asset.state!=='uploaded'||!Number.isSafeInteger(asset.size)||asset.size<2||asset.size>1024**3||!/^sha256:[a-f0-9]{64}$/i.test(asset.digest||''))return null;
+  return {version,name,url,size:asset.size,sha256:asset.digest.slice(7).toLowerCase(),publishedAt:release.published_at||null,kind};
+ }
+ const full=find(`REWIND-${version}-Setup.exe`,'full');
+ if(!full)throw new MaintenanceError('invalid-release');
+ if(!currentVersion||!newerVersion(version,currentVersion))return full;
+ const base=versionParts(currentVersion).join('.');
+ const delta=find(`REWIND-${base}-to-${version}-Update.exe`,'delta');
+ return delta&&delta.size<full.size?delta:full;
 }
 async function trustedDownload(fetchRequest,url,options){
  for(let redirects=0;redirects<6;redirects++){
@@ -27,7 +36,19 @@ class AppUpdater extends EventEmitter{
  constructor({version,cacheDir,installed=false,platform=process.platform,fetchRequest=globalThis.fetch}){super();Object.assign(this,{version,cacheDir,installed,platform,fetchRequest});this.state={phase:'idle',currentVersion:version,version:null,progress:0,received:0,total:0,error:null,installed:installed&&platform==='win32'};}
  status(){return {...this.state};}
  set(patch){Object.assign(this.state,patch);this.emit('state',this.status());return this.status();}
- async cleanup(){for(const name of await fsp.readdir(this.cacheDir).catch(()=>[])){const old=/^REWIND-(\d+\.\d+\.\d+)-Setup\.exe$/.exec(name);if(/^[a-f0-9-]{36}\.partial$/.test(name)||old&&!newerVersion(old[1],this.version))await fsp.unlink(path.join(this.cacheDir,name)).catch(()=>{});}}
+ async cleanup({keep=null}={}){
+  for(const name of await fsp.readdir(this.cacheDir).catch(()=>[])){
+   if(name===keep)continue;
+   const setup=/^REWIND-(\d+\.\d+\.\d+)-Setup\.exe$/.exec(name);
+   const delta=/^REWIND-(\d+\.\d+\.\d+)-to-(\d+\.\d+\.\d+)-Update\.exe$/.exec(name);
+   let obsolete=/^[a-f0-9-]{36}\.partial$/.test(name);
+   try{
+    if(setup)obsolete=Boolean(keep)||!newerVersion(setup[1],this.version);
+    if(delta)obsolete=Boolean(keep)||delta[1]!==this.version||!newerVersion(delta[2],this.version);
+   }catch{/* Ignore filenames with invalid versions. */}
+   if(obsolete)await fsp.unlink(path.join(this.cacheDir,name)).catch(()=>{});
+  }
+ }
  check(){if(this.checking)return this.checking;if(['downloading','installing'].includes(this.state.phase))return Promise.resolve(this.status());this.checking=this.checkOnce().finally(()=>{this.checking=null;});return this.checking;}
  async checkOnce(){
   const previous=this.status(),previousFile=this.file,previousAsset=this.asset;this.set({phase:'checking',error:null});try{
@@ -35,10 +56,10 @@ class AppUpdater extends EventEmitter{
    if(!response.ok)throw new MaintenanceError([403,429].includes(response.status)?'rate-limit':'network');
    const text=await response.text();if(text.length>1024*1024)throw new MaintenanceError('invalid-release');
    let data;try{data=JSON.parse(text);}catch{throw new MaintenanceError('invalid-release');}
-   const asset=releaseInstaller(data);this.asset=asset;
+   const asset=releaseInstaller(data,this.state.installed?this.version:null);this.asset=asset;
    if(!newerVersion(asset.version,this.version)){this.file=null;return this.set({phase:'current',version:null,progress:0,total:0});}
    const candidate=path.join(this.cacheDir,asset.name);let cached=false;try{await verifyInstaller(candidate,asset);this.file=candidate;this.downloadedHash=asset.sha256;cached=true;}catch{this.file=null;}
-   return this.set({phase:cached?'ready':'available',version:asset.version,total:asset.size,progress:cached?1:0});
+   return this.set({phase:cached?'ready':'available',version:asset.version,total:asset.size,progress:cached?1:0,packageKind:asset.kind});
   }catch(error){
    if(previous.phase==='ready'&&previousFile&&previousAsset){try{await verifyInstaller(previousFile,previousAsset);this.file=previousFile;this.asset=previousAsset;return this.set({...previous,phase:'ready',error:error.code||'network'});}catch{this.file=null;return this.set({phase:'error',error:'checksum'});}}
    return this.set({phase:'error',error:error.code||'network'});
@@ -66,6 +87,7 @@ class AppUpdater extends EventEmitter{
    }
    await handle.close();handle=null;await verifyInstaller(partial,asset);if(this.controller.signal.aborted)throw new MaintenanceError('download');
    const file=path.join(this.cacheDir,asset.name);await fsp.rename(partial,file);this.file=file;this.downloadedHash=asset.sha256;
+   await this.cleanup({keep:asset.name});
    return this.set({phase:'ready',error:null,received:asset.size,progress:1});
   }catch(error){this.file=null;return this.set({phase:'available',progress:0,error:this.cancelled?null:error.code||'download'});}
   finally{clearTimeout(timer);await handle?.close().catch(()=>{});await fsp.unlink(partial).catch(()=>{});this.controller=null;}
@@ -94,6 +116,6 @@ class MaintenanceHandoff{
  }
 async function prepareCaptureShutdown({engine,saver,nativeScreen,captureWorker,audio}){
  try{await saver.waitForIdle({failOnError:true});if(engine.session&&engine.session.recordStart!==null)await saver.save('record',Date.now(),'maintenance');await saver.waitForIdle({failOnError:true});}catch{throw new MaintenanceError('save-failed');}
- await nativeScreen.stop();await captureWorker.stop();audio.stop();await engine.stop();
+ await nativeScreen.stop();await captureWorker.stop();await audio.stop();await engine.stop();
 }
 module.exports={AppUpdater,MaintenanceHandoff,MaintenanceError,releaseInstaller,newerVersion,verifyInstaller,uninstallPlan,prepareCaptureShutdown,repository};

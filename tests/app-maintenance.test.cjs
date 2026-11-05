@@ -20,6 +20,28 @@ test('in-app download follows GitHub assets, verifies bytes and rechecks them be
  const plan=await updater.installPlan('C:\\Apps with spaces\\REWIND','en');assert.equal(plan.exe,path.join(updater.cacheDir,'REWIND-0.2.10-Setup.exe'));assert.ok(plan.args.includes('/DIR=C:\\Apps with spaces\\REWIND'));assert.ok(plan.args.includes('/SILENT'));assert.ok(plan.args.includes('/REWINDUPDATE=1'));assert.ok(plan.args.includes('/LANG=english'));assert.ok(states.includes('downloading'));
  await fs.writeFile(plan.exe,Buffer.concat([Buffer.from('MZ'),Buffer.alloc(600,0)]));await assert.rejects(updater.installPlan('C:\\Apps','ru'),/checksum/);assert.equal(updater.status().phase,'available');
 });
+test('an installed version downloads only its matching smaller update and prunes superseded cached packages',async t=>{
+ const data=release(),name='REWIND-0.2.9-to-0.2.10-Update.exe';
+ const patch=bytes.subarray(0,60),digest=createHash('sha256').update(patch).digest('hex');
+ data.assets.push({name,state:'uploaded',size:patch.length,digest:'sha256:'+digest,
+  browser_download_url:`https://github.com/axolotllnd/rewind/releases/download/v0.2.10/${name}`});
+ assert.equal(releaseInstaller(data,'0.2.8').kind,'full');
+ assert.equal(releaseInstaller(data).kind,'full');
+ const corrupt=structuredClone(data);corrupt.assets[1].digest=null;
+ assert.equal(releaseInstaller(corrupt,'0.2.9').kind,'full');
+ const updater=await fixture(t,async url=>{
+  if(url.includes('api.github.com'))return Response.json(data);
+  assert.ok(url.endsWith('/'+name),url);return new Response(patch);
+ });
+ await fs.writeFile(path.join(updater.cacheDir,'REWIND-0.2.10-Setup.exe'),bytes);
+ await fs.writeFile(path.join(updater.cacheDir,'keep.txt'),'untouched');
+ const state=await updater.check();assert.equal(state.packageKind,'delta');assert.equal(state.total,patch.length);
+ assert.equal((await updater.download()).phase,'ready');
+ assert.equal(path.basename((await updater.installPlan('C:\\Apps\\REWIND','ru')).exe),name);
+ assert.deepEqual((await fs.readdir(updater.cacheDir)).sort(),[name,'keep.txt']);
+ const updated=new AppUpdater({version:'0.2.10',cacheDir:updater.cacheDir,installed:true,platform:'win32'});
+ await updated.cleanup();assert.deepEqual(await fs.readdir(updater.cacheDir),['keep.txt']);
+});
 test('bad, truncated or redirected downloads never become executable update candidates and partial files are removed',async t=>{
  for(const mode of ['hash','truncated','oversized','redirect']){
   const updater=await fixture(t,async(url)=>url.includes('api.github.com')?Response.json(release()):mode==='redirect'?new Response(null,{status:302,headers:{location:'https://evil.example/payload'}}):new Response(mode==='truncated'?bytes.subarray(0,10):mode==='oversized'?Buffer.concat([bytes,bytes]):Buffer.alloc(bytes.length)));

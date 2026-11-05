@@ -326,6 +326,7 @@
   "{0} уже назначено действию «{1}». Текущее назначение сохранено. Выбери другое сочетание.": "{0} is already assigned to “{1}”. The current assignment is unchanged. Choose another shortcut.",
   "Внутри REWIND сочетания не повторяются. Бинды других программ не мешают назначению; эти программы также могут реагировать на нажатие.": "Shortcuts within REWIND must be unique. Shortcuts in other apps do not prevent assignment; those apps may also respond to the same key press.",
   "Обновления": "Updates",
+  "Скачаются только изменённые файлы.": "Only changed files will be downloaded.",
   "Проверить обновления": "Check for updates",
   "Проверь, есть ли новая версия.": "Check if a new version is available.",
   "Проверяем обновления…": "Checking for updates…",
