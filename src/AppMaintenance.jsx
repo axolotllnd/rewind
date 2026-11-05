@@ -21,7 +21,7 @@ const errors={
 function message(error){const code=String(error).trim().split(': ').at(-1);return t(errors[code]||'Не удалось выполнить действие. Повтори попытку.');}
 const megabytes=value=>(value/1024**2).toFixed(1);
 export default function AppMaintenance({cfg,configure}){
- const [state,setState]=useState({phase:'idle',currentVersion:'0.2.12',installed:false,canUninstall:false}),[working,setWorking]=useState(false),[confirmation,setConfirmation]=useState(null),[failure,setFailure]=useState('');
+ const [state,setState]=useState({phase:'idle',currentVersion:'0.2.13',installed:false,canUninstall:false}),[working,setWorking]=useState(false),[confirmation,setConfirmation]=useState(null),[failure,setFailure]=useState('');
  useEffect(()=>{let alive=true;const accept=next=>{if(alive)setState(previous=>({...previous,...next}));};const unsubscribe=api?.onMaintenanceState?.(accept);api?.maintenanceState?.().then(accept).catch(()=>{if(alive)setFailure('network');});return()=>{alive=false;unsubscribe?.();};},[]);
  const busy=working||['checking','downloading','installing','removing'].includes(state.phase);
  async function act(action){setWorking(true);setFailure('');try{const result=await api[action]();if(result)setState(previous=>({...previous,...result}));}catch(error){setFailure(error.message);}finally{setWorking(false);}}

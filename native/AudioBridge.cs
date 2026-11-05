@@ -18,9 +18,35 @@ class AudioBridge{
  static void List(IMMDeviceEnumerator e){Console.OutputEncoding=new UTF8Encoding(false);var list=new System.Collections.Generic.List<string>();for(int flow=0;flow<2;flow++){string def="";try{IMMDevice d;e.GetDefaultAudioEndpoint(flow,1,out d);def=DeviceId(d);Marshal.ReleaseComObject(d);}catch{}IMMDeviceCollection c;e.EnumAudioEndpoints(flow,1,out c);uint count;c.GetCount(out count);for(uint i=0;i<count;i++){IMMDevice d;c.Item(i,out d);string id=DeviceId(d);list.Add("{\"id\":"+Json(id)+",\"name\":"+Json(Name(d))+",\"flow\":"+Json(flow==0?"output":"input")+",\"isDefault\":"+(id==def?"true":"false")+"}");Marshal.ReleaseComObject(d);}Marshal.ReleaseComObject(c);}Console.Write("["+string.Join(",",list.ToArray())+"]");}
  static void Capture(IMMDeviceEnumerator e,string id,int flow,double epoch){IMMDevice device;if(id=="default")e.GetDefaultAudioEndpoint(flow,1,out device);else e.GetDevice(id,out device);var iid=new Guid("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2");object o;device.Activate(ref iid,23,IntPtr.Zero,out o);var client=(IAudioClient)o;
   IntPtr format=Marshal.AllocHGlobal(18);byte[] fmt=new byte[18];using(var ms=new MemoryStream(fmt))using(var bw=new BinaryWriter(ms)){bw.Write((ushort)3);bw.Write((ushort)2);bw.Write(48000);bw.Write(384000);bw.Write((ushort)8);bw.Write((ushort)32);bw.Write((ushort)0);}Marshal.Copy(fmt,0,format,18);
-  client.Initialize(0,0x80000000u|0x08000000u|(flow==0?0x00020000u:0),1000000,0,format,IntPtr.Zero);Marshal.FreeHGlobal(format);iid=new Guid("C8ADBD64-E71E-48A0-A4DE-185C395CD317");client.GetService(ref iid,out o);var capture=(IAudioCaptureClient)o;Stream output=Console.OpenStandardOutput();byte[] silence=new byte[38400];long written=0;double elapsed=epoch>0?((DateTime.UtcNow-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalMilliseconds-epoch)/1000.0:0;double start=(double)Stopwatch.GetTimestamp()/Stopwatch.Frequency-elapsed;client.Start();
-  Action<long> zeros=frames=>{while(frames>0){int n=(int)Math.Min(frames,4800);output.Write(silence,0,n*8);written+=n;frames-=n;}};
-  while(true){uint packet;capture.GetNextPacketSize(out packet);while(packet>0){IntPtr data;uint frames,flags;ulong pos,qpc;capture.GetBuffer(out data,out frames,out flags,out pos,out qpc);long first=(long)Math.Round(((double)qpc/10000000.0-start)*48000.0);if(first>written)zeros(first-written);int skip=(int)Math.Min((long)frames,Math.Max(0,written-first));int count=(int)frames-skip;if(count>0){byte[] bytes=new byte[count*8];if((flags&2)==0)Marshal.Copy(IntPtr.Add(data,skip*8),bytes,0,bytes.Length);output.Write(bytes,0,bytes.Length);written+=count;}capture.ReleaseBuffer(frames);capture.GetNextPacketSize(out packet);}long now=(long)(((double)Stopwatch.GetTimestamp()/Stopwatch.Frequency-start)*48000)-2400;if(now>written)zeros(now-written);output.Flush();Thread.Sleep(5);}
+  // A one-second shared-mode ring absorbs scheduling spikes during replay saves.
+  try { client.Initialize(0,0x80000000u|0x08000000u|(flow==0?0x00020000u:0),10000000,0,format,IntPtr.Zero); }
+  finally { Marshal.FreeHGlobal(format); }
+  iid=new Guid("C8ADBD64-E71E-48A0-A4DE-185C395CD317");client.GetService(ref iid,out o);var capture=(IAudioCaptureClient)o;
+  long period,minPeriod;client.GetDevicePeriod(out period,out minPeriod);
+  double elapsed=epoch>0?((DateTime.UtcNow-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalMilliseconds-epoch)/1000.0:0;
+  double start=(double)Stopwatch.GetTimestamp()/Stopwatch.Frequency-elapsed;
+  Func<long> now=()=> (long)(((double)Stopwatch.GetTimestamp()/Stopwatch.Frequency-start)*48000);
+  using(var writer=new AudioPcmWriter(Console.OpenStandardOutput())) {
+   var timeline=new AudioTimeline(writer.Enqueue,(int)Math.Ceiling(period*48000.0/10000000));
+   client.Start();
+   try {
+    while(true) {
+     writer.Check();uint packet;capture.GetNextPacketSize(out packet);
+     while(packet>0) {
+      IntPtr data;uint frames,flags;ulong pos,qpc;
+      capture.GetBuffer(out data,out frames,out flags,out pos,out qpc);
+      byte[] bytes;
+      // Copy and release BEFORE timing, mixing, or writing anything to a pipe.
+      try { bytes=new byte[checked((int)frames*8)];if((flags&2)==0&&frames>0)Marshal.Copy(data,bytes,0,bytes.Length); }
+      finally { capture.ReleaseBuffer(frames); }
+      long first=qpc==0?-1:(long)Math.Round(((double)qpc/10000000.0-start)*48000);
+      timeline.Packet(bytes,flags,first,now());
+      capture.GetNextPacketSize(out packet);
+     }
+     timeline.Idle(now());Thread.Sleep(5);
+    }
+   } finally { client.Stop(); }
+  }
  }
  [STAThread]static int Main(string[] args){try{var e=(IMMDeviceEnumerator)new MMEnumerator();if(args.Length==0||args[0]=="list")List(e);else if(args[0]=="capture"&&args.Length>=3)Capture(e,args[1],args[2]=="output"?0:1,args.Length>3?double.Parse(args[3],System.Globalization.CultureInfo.InvariantCulture):0);else throw new Exception("Invalid audio command");return 0;}catch(Exception ex){Console.Error.WriteLine(ex.Message+" (0x"+ex.HResult.ToString("X")+")");return 1;}}
 }
