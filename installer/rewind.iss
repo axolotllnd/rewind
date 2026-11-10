@@ -41,11 +41,7 @@ OutputDir={#Root}\work\installer-regression
 OutputDir={#Root}\outputs
 #endif
 #ifdef UpdateFrom
-#ifdef AudioRepair
-OutputBaseFilename=REWIND-{#AppVersion}-Audio-Fix
-#else
 OutputBaseFilename=REWIND-{#UpdateFrom}-to-{#AppVersion}-Update
-#endif
 #else
 OutputBaseFilename=REWIND-{#AppVersion}-Setup
 #endif
@@ -111,9 +107,7 @@ Name: "desktopicon"; Description: "{cm:DesktopShortcut}"; Flags: unchecked
 #else
 Source: "{#Root}\outputs\REWIND-{#AppVersion}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "data\*,data"
 #endif
-#ifndef AudioRepair
 Source: "installed.json"; DestDir: "{app}\resources"; Flags: ignoreversion
-#endif
 
 #ifndef UpdateFrom
 #ifndef VerifyDelta
